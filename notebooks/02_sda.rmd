@@ -1,0 +1,226 @@
+---
+title: "Golf Course Manager SDA"
+author: "Thomas Kulch"
+output: pdf_document
+# put this rmd into notebooks directory and the pdf into docs
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r libraries, echo=FALSE, message=FALSE}
+library(knitr)
+library(tidyverse)
+library(readr)
+library(dplyr)
+library(tidyr)
+library(readxl)
+library(stringr)
+library(lubridate)
+library(aplpack)
+library(gridExtra)
+library(maps)
+library(cowplot)
+library(fitdistrplus)
+```
+# Load Data
+```{r load}
+df <- read.csv("../data/processed/golf_cleaned.csv")
+summary(df)
+head(df)
+```
+
+# Add season to df for plotting
+
+```{r add season column}
+df$date <- as.Date(df$date)
+df <- df %>%
+  mutate(season = case_when(
+    month(date) %in% c(12, 1, 2) ~ "Winter",
+    month(date) %in% c(3, 4, 5) ~ "Spring",
+    month(date) %in% c(6, 7, 8) ~ "Summer",
+    month(date) %in% c(9, 10, 11) ~ "Fall"
+  ))
+head(df)
+```
+
+# Conditional Boxplots 
+
+
+```{r conditional boxplots}
+df |>
+  ggplot(aes(x=season,y=score,color=season)) + geom_boxplot(orientation="x")
+```
+The medians are around the same for all seasons. Spring and Summer have virtually identical distributions of scores with more outliers on the lower end. Winter has some higher score outliers and no outliers on the lower end.
+
+```{r identify outliers}
+ggplot(tibble(measurement=df$score)) +
+  geom_boxplot(aes(x=df$score))
+```
+
+There are quite a few outliers on the high end, but it's likely that weather or other conditions caused this and we should leave these  records in
+
+# Plot the histogram and empirical CDF 
+```{r pdf,cdf, stats}
+plotdist(data=df$score,
+         histo=TRUE,
+         demp=FALSE,
+         discrete=TRUE)
+
+```
+Our data looks to be a bit right skewed, but could be normal. The CDF indicates a normal distribution with low standard deviation. We will run the Cullen Frey still.
+
+
+
+```{r Cullen-Frey graph}
+descdist(df$score,
+         discrete=TRUE
+         )
+
+```
+
+The data is very close to the normal distribution, but could also potentially be Poisson.
+
+# Create a bootstrap cluster on the Cullen-Frey chart 
+```{r Cullen-Frey graph, bootstrapping}
+descdist(df$score,
+         discrete=TRUE,
+         boot=1000
+         )
+```
+Our bootstrap cluster is very tight and very close to the normal distribution, so it is safe to say our data is normally distributed and that is what I will consider as the family
+
+#Normal
+```{r fit normal}
+fit_normal <- fitdist(df$score, "norm")
+summary(fit_normal)
+
+```
+
+# Poisson
+```{r fit poisson}
+fit_poisson <- fitdist(df$score, "pois")
+summary(fit_poisson)
+```
+
+
+The loglikelihood of Poisson is much worse than Normal so we will stick with Normal Distribution as our family. This confirms that we can use Linear Regression as our ML model later on and we can begin feature validation using TTests.
+
+# TTest #1: Rain vs. Shine
+NULL HYPOTHESIS: Rainy conditions do not negatively affect players golf scores
+ALTERNATIVE HYPOTHESIS: Rainy conditions do negatively affect players golf scores
+
+```{r ttest rainy days vs dry days}
+dry_days <- df[df$precipitation == 0,]
+rainy_days <- df[df$precipitation > 0,]
+
+t.test(dry_days$score, rainy_days$score)
+```
+This ttest shows that the rainy conditions do heavily affect player scores and we can reject the null hypothesis
+
+# TTest #2: Windy vs. Not windy
+NULL HYPOTHESIS: The wind does not negatively affect players golf scores
+ALTERNATIVE HYPOTHESIS: The wind does negatively affect players golf scores
+
+```{r ttest windy vs not windy}
+calm_days <- df[df$wind_speed <= 15,]
+windy_days <- df[df$wind_speed > 15,]
+
+t.test(calm_days$score, windy_days$score)
+```
+
+This ttest shows that the windy conditions do heavily affect player scores and we can reject the null hypothesis. But which wind levels affect scores the most?
+
+# TTest #2.1
+```{r ttest windy vs not windy2}
+calm_days <- df[df$wind_speed <= 10,]
+windy_days <- df[df$wind_speed > 10,]
+
+t.test(calm_days$score, windy_days$score)
+```
+
+The difference here is still pretty significant and our p value is still really low.
+
+# Ttest #2.2
+
+```{r ttest windy vs not windy3}
+calm_days <- df[df$wind_speed <= 5,]
+windy_days <- df[df$wind_speed > 5,]
+
+t.test(calm_days$score, windy_days$score)
+```
+We still have a pretty significant difference in scores. It seems that any amount of wind is going to affect scores pretty significantly.
+
+# Ttest #3: Combined weather conditions and temp
+
+NULL HYPOTHESIS: Poor combined weather conditions do not negatively affect golf scores
+ALTERNATIVE HYPOTHESIS: Poor combined weather conditions do negatively affect golf scores
+
+```{r ttest combined weather}
+nice_days <- df[df$wind_speed <= 5 & df$precipitation == 0 & df$avg_temp > 60,]
+poor_days <- df[df$wind_speed > 5 & df$precipitation > 0 & df$avg_temp <= 60,]
+
+t.test(nice_days$score, poor_days$score)
+```
+
+Our p value is pretty low and the means of each are pretty different meaning we can reject our null hypothesis.
+
+# Ttest #4: Temperative alone
+
+NULL HYPOTHESIS: Low temperature does not negatively affect golf scores
+ALTERNATIVE HYPOTHESIS: Low temperature does negatively affect golf scores
+
+```{r ttest temperature}
+cold_days <- df[df$avg_temp < 60,]
+warm_days <- df[df$avg_temp >= 60,]
+
+t.test(warm_days$score, cold_days$score)
+```
+
+With a low p value and significant difference in means, we can reject our null hypothesis that temperature alone does not negatively affect golf scores
+
+
+# Ttest #5: Day of week
+NULL HYPOTHESIS: Day of the week does not negatively affect golf scores
+ALTERNATIVE HYPOTHESIS: Day of the week does negatively affect golf scores
+```{r ttest day of week}
+weekends <- df[df$day_of_week_int >= 5,]
+weekdays <- df[df$day_of_week_int < 5,]
+
+t.test(weekends$score, weekdays$score)
+```
+We can reject our null hypothesis here as scores on the weekends appear to be 1.4 strokes better than on weekdays
+
+# Ttest #6: Amount of rounds played
+NULL HYPOTHESIS: High rounds played at the course does not positively affect golf scores
+ALTERNATIVE HYPOTHESIS: High rounds played at the course does positively affect golf scores
+```{r ttest rounds played}
+many_rounds <- df[df$round >= 10,]
+low_rounds <- df[df$round < 10,]
+
+t.test(many_rounds$score, low_rounds$score)
+```
+Those who play many rounds look to shoot much better than those who play less rounds at the course on average. We can reject our null hypothesis here as well.
+
+Now we can run a correlation test to see if handicap is correlated with your scores at the course.
+# Correlation: Score and Handicap
+```{r corr score and handicap}
+cor.test(df$handicap, df$score)
+```
+Based on these results, score and handicap do move in the same direction, but not strongly. This shows that things like conditions and course difficulty matter more at this course than your handicap. Better handicaps, however do indicate better scores. We can still use it in our ML model.
+
+# Conclusion
+In this SDA, we have been able to determine the relationships between features like weather conditions, temperature, day of the week and handicap to our players scores. We also figured out that our data is normally distributed and the best model to use for our predictions is Linear Regression. The data is in good shape and is a good starting point for our course manager and platform that will be used for predicting your score for the day.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
