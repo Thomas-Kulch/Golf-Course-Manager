@@ -1,1 +1,1 @@
-# Golf-Analytics-Platform
+# Golf-Course-Manager
