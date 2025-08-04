@@ -16,7 +16,7 @@ Welcome to Boston Country Club! This project is a golf course management system 
 - **Backend**: Python, Flask
 - **Big Data**: Apache Spark
 - **Database**: PostgreSQL
-- **Machine Learning**: Scikit-learn, Pandas
+- **Machine Learning**: Scikit-learn
 - **Visualization**: Matplotlib
 - **Frontend**: HTML
 
